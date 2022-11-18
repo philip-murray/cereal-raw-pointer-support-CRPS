@@ -4,6 +4,8 @@ CRPS - Cereal Raw Pointer Support (Experimental)
 CRPS enables serialization of raw pointers which point to objects that are co-serialized by the graph traversal. This allows for references to be taken to a struct's members without allocating the members seperately with a std::shared_ptr. CRPS was intented for cases where a class is allocated with a std::shared_ptr, but a reference to one it's members must persist as well. 
 <br></br>
 
+## Usage
+
 To use CRPS, construct an archive as normal, and then place the archive into the constructor of either ```crps::CRPSOutputArchive<ArchiveType>``` or ```crps::CRPSInputArchive<ArchiveType>```. All serialization calls must be done through the CRPSArchive class instead of the ArchiveType archive. To finish serialization, the CRPSArchive's destructor must execute, or alternatively the CRPSArchive complete() method may be called. 
 
 A class may serialize a ```T*``` by passing it into ```crps::make_raw_ptr(T*)``` before the archive call. Alternatively, ```crps::raw_ptr<T>``` may be used in place of ```T*```. For STL types, ```std::vector<T*>``` does not compile, but ```std::vector<raw_ptr<T>>``` does.
@@ -20,7 +22,6 @@ int main() {
 
     int x = 4;
     int* y = &x;
-
     {
         std::ofstream os("save.out", std::ios::binary);
         cereal::BinaryOutputArchive oarchive(os);
@@ -80,7 +81,6 @@ int main() {
 
     std::vector<std::shared_ptr<Vertex>> vertices{ v1, v2 };
     std::vector<Edge> edges{ e1, e2 };
-
     {
         std::ofstream os("out.txt", std::ios::binary);
         cereal::BinaryOutputArchive oarchive(os);
@@ -92,7 +92,6 @@ int main() {
 
     std::vector<std::shared_ptr<Vertex>> vertices_load;
     std::vector<Edge> edges_load;
-
     {
         std::ifstream is("out.txt", std::ios::binary);
         cereal::BinaryInputArchive iarchive(is);
@@ -146,7 +145,6 @@ int main() {
     Point* p;
     float* x;
     float* y;
-
     {
         std::ifstream is("save.out", std::ios::binary);
         cereal::BinaryInputArchive iarchive(is);
@@ -159,6 +157,7 @@ int main() {
     std::cout << p << std::endl; // prints &point
     std::cout << x << std::endl; // prints &point
     std::cout << y << std::endl; // prints &point + sizeof(float) bytes
+    
 }
 ```
 <br></br>

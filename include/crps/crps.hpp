@@ -13,8 +13,7 @@ namespace crps
     /*! @ingroup Utility */
     struct CRPSException : public std::runtime_error
     {
-        explicit CRPSException(const std::string& msg): std::runtime_error(msg) {}
-        explicit CRPSException(const char* msg): std::runtime_error(msg) {}
+        using std::runtime_error::runtime_error;
     };
 
     namespace detail 
@@ -55,7 +54,7 @@ namespace crps
         typename std::enable_if<!std::is_base_of<detail::CRPSMapperCore, Archive>::value, void>::type
         CEREAL_SERIALIZE_FUNCTION_NAME(Archive& ar)
         {
-
+            
         }
     };
 
@@ -185,23 +184,34 @@ namespace crps
     class CRPSInputMapper;
     class CRPSOutputMapper;
 
-    // ######################################################################  
-    //! Core functionality of CRPSOutputArchive and CRPSInputArchive.
-    /*! This class contains the core functionality for CRPSOutputArchive
-        and CRPSInputArchive. The interface wraps the archive interface, 
-        forwarding types to both the user's archive and the crps mapper. 
+    // ######################################################################
+    //! A wrapper that enables serializing raw pointers for output archives.    
+    /*! This class enables an archive to be used to serialize raw pointers 
+        that point to types co-serialized by the graph traversal. It provides 
+        an archive interface that wraps the interface of the provided user archive, 
+        to intercept objects and store their memory addresses.  
 
-        @internal */
-    template<class Archive, class Mapper>
-    class CRPSArchiveBase
+        Upon ~CRPSOutputArchive or CRPSOutputArchive::complete, 
+        a vector used for mapping pointer indexes to object traversal indexes 
+        is passed into the user provided archive to be serialized. An exception 
+        is thrown if serialization is attempted after CRPSOutputArchive::complete. 
+         
+        Tracking addresses of BinaryData is not currently supported. 
+
+        @endcode */
+    template<class Archive>
+    class CRPSOutputArchive
     {
     public:
 
         /*! @param archive The archive provided by the user, its interface is wrapped for object tracking. */
-        CRPSArchiveBase(Archive& archive) : archive(archive) { }
+        CRPSOutputArchive(Archive& archive) : archive(archive)
+        {
+            static_assert(Archive::is_saving::value, "CRPSOutputArchive<Archive> cannot be used with an input archive.");
+        }
 
         /*! Complete defered action if not completed. */
-        ~CRPSArchiveBase()
+        ~CRPSOutputArchive()
         {
             complete();
         }
@@ -213,9 +223,9 @@ namespace crps
         */
         void complete()
         {
-            if (completed)
+            if (completed) {
                 return;
-
+            }
             completed = true;
 
             archive.serializeDeferments();
@@ -224,7 +234,7 @@ namespace crps
 
         //! Forwards types to user archive and crps mapper. 
         template <class ... Types> inline
-        CRPSArchiveBase& operator()(Types&& ... args)
+        CRPSOutputArchive& operator()(Types&& ... args)
         {
             handle(std::forward<Types>(args)...);
             return *this;
@@ -232,7 +242,7 @@ namespace crps
 
         //! This is a boost compatability layer.
         template <class T> inline
-        CRPSArchiveBase& operator&(T&& arg)
+        CRPSOutputArchive& operator&(T&& arg)
         {
             handle(std::forward<T>(arg));
             return *this;
@@ -240,7 +250,7 @@ namespace crps
 
         //! This is a boost compatability layer.
         template <class T> inline
-        CRPSArchiveBase& operator<<(T&& arg)
+        CRPSOutputArchive& operator<<(T&& arg)
         {
             handle(std::forward<T>(arg));
             return *this;
@@ -254,8 +264,9 @@ namespace crps
         template <class ... Types> inline
         void handle(Types&& ... args)
         {
-            if (completed)
+            if (completed) {
                 throw CRPSException("Attempted serialization after CRPSArchiveBase::complete called");
+            }
 
             archive(std::forward<Types>(args)...);
             pointer_mapper(std::forward<Types>(args)...);
@@ -264,57 +275,9 @@ namespace crps
     private:
         Archive& archive; //!< User provided serialization archive
 
-        Mapper pointer_mapper; //!< type is CRPSOutputMapper if Archive::is_saving, otherwise CRPSInputMapper
+        CRPSOutputMapper pointer_mapper; //!< type is CRPSOutputMapper if Archive::is_saving, otherwise CRPSInputMapper
 
         bool completed{ false }; //!< True if CRPSOutputMapper or CRPSInputMapper complete method has been called
-    };
-
-    
-
-    
-    // ######################################################################
-    //! A wrapper that enables serializing raw pointers for output archives.    
-    /*! This class enables an archive to be used to serialize raw pointers 
-        that point to types co-serialized by the graph traversal. It provides 
-        an archive interface that wraps the interface of the provided user archive, 
-        to intercept objects and store their memory addresses.  
-
-        Upon ~CRPSOutputArchive or CRPSOutputArchive::complete, 
-        a vector used for mapping pointer indexes to object traversal indexes 
-        is passed into the user provided archive to be serialized. An exception 
-        is thrown if serialization is attempted after CRPSOutputArchive::complete. 
-         
-        BinaryData is not currently supported. 
-
-        Example:
-        @code{cpp}
-
-        Point p_save;
-        float* x_save = &(p1.x);
-        raw_ptr<float> y_save = &(p1.y);
-
-        {
-            std::ofstream os("save.txt", std::ios::binary);
-            cereal::JSONOutputArchive oarchive(os);
-            crps::CRPSOutputArchive<cereal::JSONOutputArchive> crps_oarchive(oarchive);
-
-            crps_oarchive(p_save, make_raw_ptr(x_save), y_save), 
-        }
-        //pointer book-keeping is serialized at crps_oarchive destruction. 
-
-        @endcode */
-    template<class Archive>
-    class CRPSOutputArchive : public CRPSArchiveBase<Archive, CRPSOutputMapper>
-    {
-    public:
-
-        /*! @param output_archive The archive provided by the user, its interface is wrapped for object tracking. */
-        CRPSOutputArchive(Archive& output_archive) :
-            CRPSArchiveBase<Archive, CRPSOutputMapper>(output_archive)
-        {
-            static_assert(Archive::is_saving::value, "CRPSOutputArchive<Archive> cannot be used with an input archive.");
-        }
-
     };
     
     // ###################################################################### 
@@ -330,39 +293,89 @@ namespace crps
         association of pointers relative to object traversal indexes. An exception 
         is thrown if serialization is attempted after CRPSInputArchive::complete. 
 
-        BinaryData is not currently supported.
-
-        Example:
-        @code{cpp}
-
-        Point p_load;
-        float* x_load;
-        raw_ptr<float> y_load;
-
-        {
-            std::ifstream is("save.txt", std::ios::binary);
-            cereal::JSONInputArchive iarchive(is);
-            crps::CRPSInputArchive<cereal::JSONInputArchive> crps_iarchive(iarchive);
-
-            crps_iarchive(p_load, make_raw_ptr(x_load), y_load), 
-        } 
-        //pointer association is restored at crps_iarchive destruction
+        Tracking addresses of BinaryData is not currently supported.
 
         @endcode */
+
     template<class Archive>
-    class CRPSInputArchive : public CRPSArchiveBase<Archive, CRPSInputMapper>
+    class CRPSInputArchive
     {
     public:
 
-        /*! @param input_archive The archive provided by the user, its interface is wrapped for object tracking. */
-        CRPSInputArchive(Archive& input_archive) :
-            CRPSArchiveBase<Archive, CRPSInputMapper>(input_archive)
-        {
+        /*! @param archive The archive provided by the user, its interface is wrapped for object tracking. */
+        CRPSInputArchive(Archive& archive) : archive(archive)
+        { 
             static_assert(Archive::is_loading::value, "CRPSInputArchive<Archive> cannot be used with an output archive.");
         }
 
-    };
+        /*! Complete defered action if not completed. */
+        ~CRPSInputArchive()
+        {
+            complete();
+        }
 
+        /*! For OutputArchive: generates pointer book-keeping and saves book-keeping to output_archive,
+            For InputArchive: loads book-keeping from input_archive and does defered pointer initialization.
+
+            @throws CRPSException If pointer-booking serialization or defered pointer initialization fails.
+        */
+        void complete()
+        {
+            if (completed) {
+                return;
+            }
+            completed = true;
+
+            archive.serializeDeferments();
+            pointer_mapper.complete(archive);
+        }
+
+        //! Forwards types to user archive and crps mapper. 
+        template <class ... Types> inline
+        CRPSInputArchive& operator()(Types&& ... args)
+        {
+            handle(std::forward<Types>(args)...);
+            return *this;
+        }
+
+        //! This is a boost compatability layer.
+        template <class T> inline
+        CRPSInputArchive& operator&(T&& arg)
+        {
+            handle(std::forward<T>(arg));
+            return *this;
+        }
+
+        //! This is a boost compatability layer.
+        template <class T> inline
+        CRPSInputArchive& operator>>(T&& arg)
+        {
+            handle(std::forward<T>(arg));
+            return *this;
+        }
+
+    private:
+
+        /*! Forwards user archive and crps mapper with types.
+            @throws CRPSException If attempted serialization afterCRPSArchiveBase::complete called.
+        */
+        template <class ... Types> inline
+        void handle(Types&& ... args)
+        {
+            if (completed) {
+                throw CRPSException("Attempted serialization after CRPSArchiveBase::complete called");
+            }
+            archive(std::forward<Types>(args)...);
+            pointer_mapper(std::forward<Types>(args)...);
+        }
+
+    private:
+        Archive& archive; //!< User provided serialization archive
+
+        CRPSInputMapper pointer_mapper; //!< type is CRPSOutputMapper if Archive::is_saving, otherwise CRPSInputMapper
+
+        bool completed{ false }; //!< True if CRPSOutputMapper or CRPSInputMapper complete method has been called
+    };
 
     // ###################################################################### 
     //! Performs pointer book-keeping when saving classes to an OutputArchive. 
@@ -394,7 +407,7 @@ namespace crps
         {
             std::vector<std::uint32_t> raw_to_obj{};
 
-            for (const auto& rpv : raw_ptr_values) 
+            for (const auto rpv : raw_ptr_values) 
             {
                 if (obj_ptr_to_id.count(rpv) == 0) 
                 {
@@ -464,8 +477,9 @@ namespace crps
             std::vector<std::uint32_t> raw_to_obj{};
             input_archive(raw_to_obj);
             
-            if (raw_to_obj.size() != raw_ptrs.size())
+            if (raw_to_obj.size() != raw_ptrs.size()) {
                 throw CRPSException("Size of raw_ptr_to_obj_id map loaded from input archive does not match size of map generated from traversal");
+            }
 
             for (int i = 0; i < raw_ptrs.size(); i++)
             {
@@ -570,7 +584,27 @@ namespace crps
     {
         ar.trackPointer(rpw.ptr);
     }
+
+    //! Do-nothing specialization for binary data
+    template <class T> inline
+    void CEREAL_SAVE_FUNCTION_NAME(CRPSOutputMapper& ar, cereal::BinaryData<T> const& bd)
+    {
     
+    }
+
+    //! Do-nothing specialization for binary data
+    template <class T> inline
+    void CEREAL_SAVE_FUNCTION_NAME(CRPSInputMapper& ar, cereal::BinaryData<T> const& bd)
+    {
+    
+    }
+
 }
+
+
+CEREAL_REGISTER_ARCHIVE(crps::CRPSOutputMapper)
+CEREAL_REGISTER_ARCHIVE(crps::CRPSInputMapper)
+
+CEREAL_SETUP_ARCHIVE_TRAITS(crps::CRPSInputMapper, crps::CRPSOutputMapper)
 
 #endif
